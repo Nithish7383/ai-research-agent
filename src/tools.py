@@ -5,6 +5,8 @@ def search_web(query: str):
 
     with DDGS() as ddgs:
         for r in ddgs.text(query, max_results=5):
-            results.append(f"{r['title']} - {r['body']}")
+            results.append(
+                f"{r['title']}\n{r['href']}\n{r['body']}\n"
+            )
 
-    return "\n".join(results)   
+    return "\n".join(results)

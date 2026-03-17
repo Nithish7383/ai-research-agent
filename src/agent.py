@@ -8,14 +8,14 @@ load_dotenv()
 
 # LLM
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="llama-3.1-8b-instant",
     temperature=0
 )
 
 # Search tool
 search = DuckDuckGoSearchRun()
 
-from tools import search_web
+from src.tools import search_web
 from langchain.agents import Tool
 
 tools = [
