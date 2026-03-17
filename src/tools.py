@@ -8,7 +8,11 @@ def search_web(query: str):
         for r in ddgs.text(query, max_results=5):
 
             results.append(
-                f"{r['title']}\n{r['href']}\n{r['body'][:200]}"
+                f"""
+Title: {r['title']}
+Link: {r['href']}
+Summary: {r['body']}
+"""
             )
 
-    return "\n\n".join(results)
+    return "\n".join(results)
