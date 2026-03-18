@@ -1,197 +1,244 @@
+import re
+import logging
 import streamlit as st
-from src.agent import agent_executor
+from dotenv import load_dotenv
+from langchain.callbacks import StreamlitCallbackHandler
 
-# -------------------------------------------------------
-# Page Config
-# -------------------------------------------------------
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="AI Research Assistant",
     page_icon="🔎",
     layout="centered",
 )
 
-# -------------------------------------------------------
-# Custom CSS
-# -------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    .reasoning-step {
-        background-color: #f8f9fa;
-        border-left: 3px solid #6c757d;
-        padding: 0.5rem 1rem;
-        margin-bottom: 0.5rem;
-        border-radius: 4px;
-        font-size: 0.85rem;
-    }
-    .tool-badge {
-        background-color: #e9ecef;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-weight: bold;
-        font-size: 0.8rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# ---------------------------------------------------------------------------
+# CSS
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+.block-container { padding-top: 2rem; padding-bottom: 2rem; }
+.stChatMessage { border-radius: 12px; }
 
-# -------------------------------------------------------
-# Sidebar
-# -------------------------------------------------------
-with st.sidebar:
-    st.title("🔎 AI Research Assistant")
-    st.write("AI-powered assistant that searches the web and summarizes answers.")
-    st.markdown("---")
+.source-box {
+    background-color: #1e1e2e;
+    border-left: 3px solid #7c83fd;
+    padding: 0.6rem 1rem;
+    border-radius: 6px;
+    margin-top: 0.8rem;
+    font-size: 0.85rem;
+}
+.source-box a { color: #7c83fd; text-decoration: none; }
+.source-box a:hover { text-decoration: underline; }
 
-    st.subheader("⚙️ Tech Stack")
-    st.write("• LangChain")
-    st.write("• Groq LLM (LLaMA 3)")
-    st.write("• DuckDuckGo Search")
-    st.write("• Streamlit")
-    st.markdown("---")
+/* Starter question pills */
+.starter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 1.2rem;
+}
+.starter-btn {
+    background: transparent;
+    border: 1px solid rgba(124,131,253,0.35);
+    border-radius: 10px;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.82rem;
+    color: #a0a8f8;
+    cursor: pointer;
+    text-align: left;
+    line-height: 1.4;
+    transition: background 0.15s;
+    width: 100%;
+}
+.starter-btn:hover { background: rgba(124,131,253,0.1); }
+</style>
+""", unsafe_allow_html=True)
 
-    st.subheader("🧠 Memory")
-    st.caption("Agent remembers last 5 conversation turns.")
+# ---------------------------------------------------------------------------
+# Starter questions
+# ---------------------------------------------------------------------------
+STARTER_QUESTIONS = [
+    "🚀 Latest AI news this week",
+    "🏏 Virat Kohli's recent cricket stats",
+    "💹 What is the current Bitcoin price?",
+    "🌍 Latest news from Tamil Nadu",
+    "🧬 Recent breakthroughs in cancer research",
+    "🎬 Top movies releasing this month",
+]
 
-    show_reasoning = st.toggle("Show agent reasoning", value=True)
-    st.markdown("---")
+# ---------------------------------------------------------------------------
+# Per-session agent init
+# ---------------------------------------------------------------------------
+if "agent" not in st.session_state:
+    try:
+        from src.agent import build_agent
+        st.session_state.agent = build_agent()
+        logger.info("New agent created for session.")
+    except EnvironmentError as e:
+        st.error(f"🚨 Configuration error: {e}")
+        st.stop()
+    except Exception as e:
+        st.error(f"🚨 Failed to initialise agent: {e}")
+        logger.exception("Agent init failed.")
+        st.stop()
 
-    if st.button("🗑 Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.reasoning_steps = []
-        # Reset agent memory too
-        agent_executor.memory.clear()
-        st.rerun()
-
-    st.caption("Built by Nithish")
-
-# -------------------------------------------------------
-# Header
-# -------------------------------------------------------
-st.title("🔎 AI Research Assistant")
-st.caption("Ask anything — I'll search the web and give you a structured answer.")
-st.markdown("---")
-
-# -------------------------------------------------------
-# Session State Init
-# -------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "reasoning_steps" not in st.session_state:
-    st.session_state.reasoning_steps = []  # list of lists, one per assistant turn
+if "pending_prompt" not in st.session_state:
+    st.session_state.pending_prompt = None
 
-# -------------------------------------------------------
-# Render Chat History
-# -------------------------------------------------------
-for i, message in enumerate(st.session_state.messages):
+# ---------------------------------------------------------------------------
+# Helper — render response + sources
+# ---------------------------------------------------------------------------
+def render_response_with_sources(text: str):
+    url_pattern = r'https?://[^\s\)\]\,\>\"\']+'
+    urls = list(dict.fromkeys(re.findall(url_pattern, text)))
+
+    clean_text = re.sub(url_pattern, '', text)
+    clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
+    st.markdown(clean_text)
+
+    if urls:
+        sources_html = '<div class="source-box"><strong>🔗 Sources</strong><br>'
+        for url in urls:
+            domain = re.sub(r'https?://(www\.)?', '', url).split('/')[0]
+            sources_html += f'<a href="{url}" target="_blank">↗ {domain}</a><br>'
+        sources_html += '</div>'
+        st.markdown(sources_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Helper — run agent and return response string
+# ---------------------------------------------------------------------------
+def run_agent(user_prompt: str) -> str:
+    st_cb = StreamlitCallbackHandler(
+        st.container(),
+        expand_new_thoughts=False,
+        collapse_completed_thoughts=True,
+    )
+    try:
+        return st.session_state.agent.run(input=user_prompt, callbacks=[st_cb])
+    except ValueError as e:
+        logger.warning(f"Max iterations: {e}")
+        return (
+            "⚠️ The agent reached its search limit. "
+            "Try rephrasing or breaking into smaller questions."
+        )
+    except Exception as e:
+        error_str = str(e).lower()
+        logger.exception(f"Agent run failed: '{user_prompt}'")
+        if "rate limit" in error_str or "429" in error_str:
+            return "⚠️ Rate limit reached. Please wait a few seconds and try again."
+        elif "api key" in error_str or "authentication" in error_str:
+            return "🚨 API key error. Please check your GROQ_API_KEY in .env."
+        return f"⚠️ Unexpected error: {e}"
+
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.title("🔎 AI Research Assistant")
+    st.write(
+        "Ask anything — the agent searches the web in real time and "
+        "summarises the answer with sources."
+    )
+    st.markdown("---")
+
+    st.subheader("⚙️ Tech Stack")
+    st.write("• LangChain (Conversational Agent)")
+    st.write("• Groq LLM  (llama-3.3-70b-versatile)")
+    st.write("• DuckDuckGo Search  (free, no API key)")
+    st.write("• Streamlit  (streaming UI)")
+    st.markdown("---")
+
+    st.subheader("🧠 Memory")
+    msg_count = len(st.session_state.messages)
+    st.write(f"Messages this session: **{msg_count}**")
+
+    if st.button("🗑 Clear Chat"):
+        st.session_state.messages = []
+        from src.agent import build_agent
+        st.session_state.agent = build_agent()
+        st.rerun()
+
+    # ── Export chat ──────────────────────────────────────────────────────────
+    if st.session_state.messages:
+        st.markdown("---")
+        st.subheader("⬇️ Export")
+        chat_export = "\n\n".join(
+            f"{'You' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in st.session_state.messages
+        )
+        st.download_button(
+            label="📄 Download chat as .md",
+            data=chat_export,
+            file_name="research_session.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+    st.markdown("---")
+    st.caption("Built by Nithish · powered by Groq + DuckDuckGo")
+
+# ---------------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------------
+st.title("🔎 AI Research Assistant")
+st.caption("Real-time web search · Summarised answers · Source citations")
+st.markdown("---")
+
+# ---------------------------------------------------------------------------
+# Render chat history
+# ---------------------------------------------------------------------------
+for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        if message["role"] == "assistant":
+            render_response_with_sources(message["content"])
+        else:
+            st.markdown(message["content"])
 
-        # Show reasoning steps below each assistant message (if toggled on)
-        if (
-            message["role"] == "assistant"
-            and show_reasoning
-            and i // 2 < len(st.session_state.reasoning_steps)
-        ):
-            steps = st.session_state.reasoning_steps[i // 2]
-            if steps:
-                with st.expander("🔍 Agent reasoning", expanded=False):
-                    for step_num, step in enumerate(steps, 1):
-                        action, observation = step
-                        st.markdown(
-                            f"""
-                            <div class="reasoning-step">
-                                <span class="tool-badge">Step {step_num} · {action.tool}</span><br>
-                                <b>Query:</b> {action.tool_input}<br>
-                                <b>Result:</b> {str(observation)[:400]}{'...' if len(str(observation)) > 400 else ''}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+# ---------------------------------------------------------------------------
+# Empty state — starter questions
+# ---------------------------------------------------------------------------
+if not st.session_state.messages:
+    st.markdown("#### 💡 Try asking...")
+    cols = st.columns(2)
+    for i, question in enumerate(STARTER_QUESTIONS):
+        with cols[i % 2]:
+            if st.button(question, key=f"starter_{i}", use_container_width=True):
+                # Strip the emoji prefix before sending to agent
+                clean_q = re.sub(r'^[\U00010000-\U0010ffff\u2600-\u26FF\u2700-\u27BF]\s*', '', question).strip()
+                st.session_state.pending_prompt = clean_q
+                st.rerun()
 
-# -------------------------------------------------------
-# Chat Input
-# -------------------------------------------------------
-prompt = st.chat_input("Ask a research question...")
+# ---------------------------------------------------------------------------
+# Chat input
+# ---------------------------------------------------------------------------
+prompt = st.chat_input("Ask a research question...") or st.session_state.pending_prompt
 
-# -------------------------------------------------------
-# Handle New User Message
-# -------------------------------------------------------
+if st.session_state.pending_prompt:
+    st.session_state.pending_prompt = None
+
 if prompt:
-    # 1. Store and display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Run agent and stream response
     with st.chat_message("assistant"):
-        response_placeholder = st.empty()
-        status_placeholder = st.empty()
+        response = run_agent(prompt)
+        render_response_with_sources(response)
 
-        full_response = ""
-        intermediate_steps = []
-
-        try:
-            # Show live status while agent is thinking/searching
-            status_placeholder.status("🔍 Researching...", state="running")
-
-            result = agent_executor.invoke(
-                {
-                    "input": prompt,
-                    "chat_history": agent_executor.memory.buffer if hasattr(agent_executor.memory, "buffer") else "",
-                }
-            )
-
-            full_response = result.get("output", "Sorry, I could not generate a response.")
-            intermediate_steps = result.get("intermediate_steps", [])
-
-            # Clear status, show final answer
-            status_placeholder.empty()
-            response_placeholder.markdown(full_response)
-
-            # Show reasoning expander immediately after response
-            if show_reasoning and intermediate_steps:
-                with st.expander("🔍 Agent reasoning", expanded=True):
-                    for step_num, step in enumerate(intermediate_steps, 1):
-                        action, observation = step
-                        st.markdown(
-                            f"""
-                            <div class="reasoning-step">
-                                <span class="tool-badge">Step {step_num} · {action.tool}</span><br>
-                                <b>Query:</b> {action.tool_input}<br>
-                                <b>Result:</b> {str(observation)[:400]}{'...' if len(str(observation)) > 400 else ''}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-
-        except ValueError as e:
-            status_placeholder.empty()
-            full_response = f"⚠️ Agent error: {str(e)}"
-            response_placeholder.markdown(full_response)
-
-        except TimeoutError:
-            status_placeholder.empty()
-            full_response = "⏱️ Request timed out. Try a simpler or more specific question."
-            response_placeholder.markdown(full_response)
-
-        except Exception as e:
-            status_placeholder.empty()
-            error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg:
-                full_response = "⚠️ Rate limit reached. Please wait a moment and try again."
-            elif "api key" in error_msg:
-                full_response = "🔑 API key error. Check your GROQ_API_KEY in the .env file."
-            else:
-                full_response = f"❌ Unexpected error: {str(e)}"
-            response_placeholder.markdown(full_response)
-
-    # 3. Save assistant message and reasoning steps to session state
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-    st.session_state.reasoning_steps.append(intermediate_steps)
+    st.session_state.messages.append({"role": "assistant", "content": response})

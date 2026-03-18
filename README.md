@@ -1,103 +1,59 @@
 # 🔎 AI Research Assistant
 
-An **AI-powered research assistant** that searches the web and generates summarized answers using LLM agents.
+An **AI-powered research assistant** that searches the web in real time and returns summarised answers with source citations.
 
-This project demonstrates how to build an **LLM agent with tool usage** using **LangChain**, **Groq LLM**, and **DuckDuckGo search**, wrapped in a clean **ChatGPT-style Streamlit interface**.
+Built with **LangChain**, **Groq LLM**, **Tavily Search**, and **Streamlit**.
 
 ---
 
-## 🖥 UI Preview
-
-![AI Research Assistant UI](assets/homepage.png)
-
 ## ✨ Features
 
-* 🤖 **LLM Agent** that decides when to search the web
-* 🔍 **Real-time Web Search** using DuckDuckGo
-* 🧠 **Prompt-engineered Research Assistant** for structured answers
-* 💬 **ChatGPT-style UI** with conversation history
-* ⚡ **Fast LLM inference** powered by Groq
-* 🧹 **Clear Chat functionality**
-* 📚 Designed for **AI research and knowledge exploration**
+| Feature | Status |
+|---|---|
+| LLM Agent with real-time web search | ✅ |
+| Streaming responses (token by token) | ✅ |
+| Per-session conversation memory | ✅ |
+| Source citations in every answer | ✅ |
+| Tavily search (DuckDuckGo fallback) | ✅ |
+| Graceful error handling (rate limits, API errors) | ✅ |
+| Clear chat resets both UI and agent memory | ✅ |
 
 ---
 
 ## 🏗 Architecture
 
+```
 User Question
-↓
-Streamlit Chat UI
-↓
-LangChain Agent
-↓
-Web Search Tool (DuckDuckGo)
-↓
-Groq LLM Reasoning
-↓
-Final Answer Returned to UI
-
----
-
-## 🧠 How the Agent Works
-
-The AI assistant follows a **tool-augmented reasoning workflow**:
-
-1. User asks a question
-2. The LangChain agent decides whether it needs external information
-3. If needed, it triggers the **DuckDuckGo search tool**
-4. Search results are passed back to the LLM
-5. The LLM synthesizes a **final summarized answer**
-
-This architecture demonstrates **LLM tool usage**, a key concept in modern **GenAI systems and AI agents**.
-
----
-
-## 🖥 UI Preview
-
-Example interaction:
-
-User:
-
+     ↓
+Streamlit Chat UI  (per-session agent)
+     ↓
+LangChain Conversational Agent
+  ├── ConversationBufferWindowMemory  (last 10 turns)
+  └── Tavily Search Tool  (DuckDuckGo fallback)
+     ↓
+Groq LLM  (llama-3.1-8b-instant, streaming)
+     ↓
+Streaming Response → UI  +  Source Citations
 ```
-When will Tamil Nadu elections happen?
-```
-
-Assistant:
-
-```
-The Tamil Nadu Assembly elections are expected to take place in 2026, 
-as the current legislative assembly term ends in May 2026.
-
-Sources:
-Election Commission of India
-Wikipedia
-```
-
----
-
-## 🛠 Tech Stack
-
-* **LangChain** – Agent framework
-* **Groq LLM** – High-speed inference
-* **DuckDuckGo Search** – Real-time information retrieval
-* **Streamlit** – Interactive web interface
-* **Python** – Core implementation
 
 ---
 
 ## 📂 Project Structure
 
 ```
-ai-research-agent
+ai-research-agent/
 │
-├── app.py                # Streamlit chat interface
+├── app.py                  # Streamlit UI — streaming, per-session agent
 │
-├── src
-│   ├── agent.py          # LangChain agent setup
-│   └── tools.py          # Web search tool
+├── src/
+│   ├── agent.py            # Agent factory — memory, LLM, tools
+│   └── tools.py            # Tavily search tool (DuckDuckGo fallback)
+│
+├── config/
+│   └── prompts.py          # System prompt (edit here to change agent behaviour)
 │
 ├── requirements.txt
-├── .env
+├── .env.example
 └── README.md
 ```
 
@@ -105,67 +61,56 @@ ai-research-agent
 
 ## ⚙️ Installation
 
-Clone the repository:
-
-```
-git clone https://github.com/yourusername/ai-research-agent.git
+```bash
+git clone https://github.com/Nithish7383/ai-research-agent.git
 cd ai-research-agent
-```
 
-Create a virtual environment:
-
-```
 python -m venv venv
-source venv/bin/activate
-```
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-Install dependencies:
-
-```
 pip install -r requirements.txt
 ```
 
-Add your **Groq API key** in `.env`:
+Copy `.env.example` to `.env` and fill in your keys:
 
-```
-GROQ_API_KEY=your_api_key_here
+```bash
+cp .env.example .env
 ```
 
-Run the application:
-
+```env
+GROQ_API_KEY=your_groq_api_key_here
+TAVILY_API_KEY=your_tavily_api_key_here   # optional — falls back to DuckDuckGo
 ```
+
+Get your keys:
+- Groq: https://console.groq.com
+- Tavily: https://app.tavily.com  (free tier: 1000 searches/month)
+
+Run:
+
+```bash
 streamlit run app.py
 ```
 
 ---
 
-## 🚀 Future Improvements
+## 🔑 Key Fixes vs Original
 
-Planned upgrades:
-
-* Source citations with clickable links
-* Streaming responses (ChatGPT-style typing)
-* Multi-agent research workflow
-* Deployment to Streamlit Cloud
-
----
-
-## 💡 Why This Project Matters
-
-Modern AI systems increasingly rely on **LLM agents with external tools**.
-
-This project demonstrates:
-
-* Tool-augmented reasoning
-* LLM orchestration with LangChain
-* Real-time information retrieval
-* AI-powered research workflows
-
-These concepts are central to **GenAI engineering and AI agent development**.
+| Issue | Original | Fixed |
+|---|---|---|
+| Agent memory | ❌ Stateless (forgot every turn) | ✅ `ConversationBufferWindowMemory` |
+| Multi-user safety | ❌ Global agent shared across users | ✅ Per-session agent in `st.session_state` |
+| Streaming | ❌ Spinner, waited for full response | ✅ `StreamlitCallbackHandler` streams tokens live |
+| Search reliability | ❌ DuckDuckGo only (rate-limits heavily) | ✅ Tavily primary, DuckDuckGo fallback |
+| Error handling | ❌ Bare `except` hid all errors | ✅ Specific handlers for rate limits, API errors |
+| Prompt config | ❌ Buried in agent init | ✅ Versioned in `config/prompts.py` |
+| Clear chat | ❌ Only cleared UI messages | ✅ Also resets agent's LangChain memory |
 
 ---
 
-## 👨‍💻 Author
+## 🚀 Planned Upgrades
 
-**Nithish**
-AI / GenAI enthusiast building intelligent systems and automation tools.
+- [ ] LangGraph multi-agent workflow (planner + researcher + writer)
+- [ ] PDF / document ingestion tool
+- [ ] Response caching for repeated queries
+- [ ] Deploy to Streamlit Cloud

@@ -1,35 +1,38 @@
-from langchain.tools import tool
+import logging
+from langchain.tools import Tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 
+logger = logging.getLogger(__name__)
 
-def get_tools():
-    """Return all tools available to the agent."""
 
-    wrapper = DuckDuckGoSearchAPIWrapper(max_results=5)
-    search = DuckDuckGoSearchRun(
-        name="web_search",
-        description=(
-            "Use this tool to search the web for current information. "
-            "Input should be a search query string. "
-            "Use this whenever the question requires recent or real-world data."
-        ),
-        api_wrapper=wrapper,
+def build_tools() -> list:
+    """
+    Build and return the list of tools available to the agent.
+    Uses DuckDuckGo — free, no API key required.
+    """
+    # DuckDuckGoSearchAPIWrapper gives more control (num results, region, etc.)
+    wrapper = DuckDuckGoSearchAPIWrapper(
+        max_results=5,
+        region="wt-wt",        # worldwide results
+        safesearch="moderate",
+        time="y",              # results from the past year (keeps answers fresh)
     )
 
-    return [search, summarize_text]
+    ddg_search = DuckDuckGoSearchRun(api_wrapper=wrapper)
 
+    tools = [
+        Tool(
+            name="web_search",
+            func=ddg_search.run,
+            description=(
+                "Use this tool to search the web for current events, facts, "
+                "news, or any question that needs up-to-date information. "
+                "Input should be a clear and specific search query string. "
+                "Use this tool before answering any factual question."
+            ),
+        )
+    ]
 
-@tool
-def summarize_text(text: str) -> str:
-    """
-    Summarizes a long block of text into key points.
-    Use this when you have retrieved long content and need to condense it.
-    Input should be the raw text to summarize.
-    """
-    # Truncate to avoid context overflow — let the LLM summarize what it gets
-    max_chars = 3000
-    truncated = text[:max_chars]
-    if len(text) > max_chars:
-        truncated += "\n\n[Content truncated for length]"
-    return truncated
+    logger.info("Tools built: DuckDuckGo search")
+    return tools
