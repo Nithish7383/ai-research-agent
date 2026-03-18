@@ -1,6 +1,6 @@
 langchain
-langchain-community
-langchain-core
 langchain-groq
-duckduckgo-search
+langchain-community
+streamlit
 python-dotenv
+duckduckgo-search
